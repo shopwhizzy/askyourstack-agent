@@ -30,7 +30,7 @@ To see it yourself on a server: `ss -tnp | grep sudowhizzy-agent`.
 
 ## Where it keeps things
 
-As root (a system service): configuration in `/etc/sudowhizzy/agent.json` (the hub address and the agent's token, mode 0600), state in `/var/lib/sudowhizzy` (jobs, snapshots, dumps, audits, deleted after 7 to 90 days), the binary in `/usr/local/bin`. As an ordinary user (shared hosting, no root): `~/.config/sudowhizzy`, `~/.local/share/sudowhizzy` and `~/.local/bin`, and it manages only that user's own sites and files (`mode.go`).
+As root (a system service): configuration in `/etc/sudowhizzy/agent.json` (the hub address and the agent's token, mode 0600), state in `/var/lib/sudowhizzy` (jobs, snapshots, dumps, audits, deleted after 7 to 90 days), the binary in `/usr/local/bin`. As an ordinary user (shared hosting, no root): `~/.config/sudowhizzy`, `~/.local/share/sudowhizzy` and `~/.local/bin`, and it manages only that user's own sites and files (`mode.go`). Root is optional: run the same install line as a jailed Linux user and the operating system, not the agent, is what keeps it inside that user's home.
 
 ## The lock
 
