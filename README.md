@@ -38,7 +38,7 @@ As root (a system service): configuration in `/etc/sudowhizzy/agent.json` (the h
 sudowhizzy-agent lock
 ```
 
-While the lock is set, the agent answers only the operations that read (`readOps` in `lock.go`) and refuses every other job, whatever the hub sends and whatever safety mode the server has in the dashboard. Only someone with a shell on the server can lift it, with `sudowhizzy-agent unlock`. It is the one check that does not depend on the hub. Signed agent updates still apply while locked.
+While the lock is set, the agent answers only the operations that read (`readOps` in `lock.go`: facts, files, logs, the health, traffic and crawl reports, snapshots and dumps it takes itself, read-only database queries) and refuses every other job, whatever the hub sends and whatever safety mode the server has in the dashboard. Shell commands (`run`, `job_start`) are refused entirely: the agent cannot tell a reading command from a writing one. Only someone with a shell on the server can lift it, with `sudowhizzy-agent unlock`. It is the one check that does not depend on the hub. Signed agent updates still apply while locked.
 
 ## Disconnect
 
