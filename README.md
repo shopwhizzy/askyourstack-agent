@@ -1,6 +1,6 @@
 # SudoWhizzy agent
 
-This is the program that [SudoWhizzy](https://sudowhizzy.com) installs on a customer's Linux server. It is the only part of SudoWhizzy that runs on your machine, and it usually runs as root, so here is its source: read it, build it, and check that the binary we serve is the one this code makes.
+This is the program that [SudoWhizzy](https://sudowhizzy.com) installs on a customer's Linux server. It is the only part of SudoWhizzy that runs on your machine, as the Linux user you choose (an ordinary user that owns your sites, or root for the whole server), so here is its source: read it, build it, and check that the binary we serve is the one this code makes.
 
 The rest of SudoWhizzy (the MCP server your AI talks to, the risk classification, the approval gate, the dashboard) runs at sudowhizzy.com and is not in this repository.
 
