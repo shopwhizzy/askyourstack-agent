@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	version = "0.14.1"
+	version = "0.14.2"
 	// Releases are signed with the matching private key, kept on the control plane.
 	releaseKey = "yipnfd7HAM5S31jEJZiYO2hTQJD1Z2QrxUCN1jQkYic="
 	keepAuto   = 20
@@ -1006,11 +1006,19 @@ func maybeUpdate(c config, latest string) {
 		fmt.Fprintln(os.Stderr, "hub offers", latest, "which is older than", version, "; refused")
 		return
 	}
-	if err := selfUpdate(c, latest); err != nil {
+	path, err := selfUpdate(c, latest)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "update to", latest, "failed:", err)
 		return
 	}
 	fmt.Fprintln(os.Stderr, "updated to", latest, "; restarting")
+	// The new binary takes over this very process (same PID, same unit, same cgroup), so
+	// the update does not depend on whoever keeps the agent alive noticing an exit. On
+	// 2026-10-07 eleven agents that the rename had left running outside their unit's main
+	// PID exited here after updating and nothing started them again.
+	if err := syscall.Exec(path, os.Args, os.Environ()); err != nil {
+		fmt.Fprintln(os.Stderr, "could not run the new binary in place:", err, "; exiting for a restart")
+	}
 	os.Exit(0)
 }
 
@@ -1026,52 +1034,54 @@ func fetch(url string, limit int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(res.Body, limit))
 }
 
-func selfUpdate(c config, latest string) error {
+// selfUpdate swaps the binary at its own path for the signed one the hub serves and
+// returns that path.
+func selfUpdate(c config, latest string) (string, error) {
 	pub, err := base64.StdEncoding.DecodeString(releaseKey)
 	if err != nil || len(pub) != ed25519.PublicKeySize {
-		return errors.New("bad built-in release key")
+		return "", errors.New("bad built-in release key")
 	}
 	raw, err := fetch(c.Hub+"/dl/manifest.json", 1<<16)
 	if err != nil {
-		return err
+		return "", err
 	}
 	sigB64, err := fetch(c.Hub+"/dl/manifest.sig", 1<<10)
 	if err != nil {
-		return err
+		return "", err
 	}
 	sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(sigB64)))
 	if err != nil || !ed25519.Verify(pub, raw, sig) {
-		return errors.New("manifest signature does not match")
+		return "", errors.New("manifest signature does not match")
 	}
 	var m manifest
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return err
+		return "", err
 	}
 	if m.Version != latest {
-		return fmt.Errorf("manifest is %s, hub said %s", m.Version, latest)
+		return "", fmt.Errorf("manifest is %s, hub said %s", m.Version, latest)
 	}
 	want := m.Files[runtime.GOARCH]
 	if want == "" {
-		return errors.New("no build for " + runtime.GOARCH)
+		return "", errors.New("no build for " + runtime.GOARCH)
 	}
 	bin, err := fetch(c.Hub+"/dl/askyourstack-agent-linux-"+runtime.GOARCH, 64<<20)
 	if err != nil {
-		return err
+		return "", err
 	}
 	sum := sha256.Sum256(bin)
 	if hex.EncodeToString(sum[:]) != want {
-		return errors.New("binary checksum does not match the signed manifest")
+		return "", errors.New("binary checksum does not match the signed manifest")
 	}
 	self, err := os.Executable()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if old, err := os.ReadFile(self); err == nil {
 		os.WriteFile(self+".prev", old, 0o755)
 	}
 	tmp := self + ".new"
 	if err := os.WriteFile(tmp, bin, 0o755); err != nil {
-		return err
+		return "", err
 	}
 	// Never swap in a binary that cannot start: it must run and name the version the manifest promised.
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -1079,9 +1089,12 @@ func selfUpdate(c config, latest string) error {
 	out, err := exec.CommandContext(ctx, tmp, "version").Output()
 	if err != nil || strings.TrimSpace(string(out)) != latest {
 		os.Remove(tmp)
-		return fmt.Errorf("the new binary does not start (%v, %q); keeping %s", err, strings.TrimSpace(string(out)), version)
+		return "", fmt.Errorf("the new binary does not start (%v, %q); keeping %s", err, strings.TrimSpace(string(out)), version)
 	}
-	return os.Rename(tmp, self)
+	if err := os.Rename(tmp, self); err != nil {
+		return "", err
+	}
+	return self, nil
 }
 
 // --- background jobs
