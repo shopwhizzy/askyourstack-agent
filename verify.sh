@@ -1,7 +1,7 @@
 #!/bin/sh
-# Checks a SudoWhizzy agent release against this source.
+# Checks an AskYourStack agent release against this source.
 #
-#   sh verify.sh            checks the release sudowhizzy.com serves right now
+#   sh verify.sh            checks the release askyourstack.com serves right now
 #   sh verify.sh /usr/local/bin/sudowhizzy-agent
 #                           also checks the binary installed on this machine
 #
@@ -12,7 +12,7 @@
 # openssl and the Go version the manifest names (go.dev/dl); a different Go
 # version gives a different hash, which proves nothing either way.
 set -eu
-HUB="${HUB:-https://sudowhizzy.com}"
+HUB="${HUB:-https://askyourstack.com}"
 cd "$(dirname "$0")"
 T=$(mktemp -d)
 # Checking out the release commit detaches this checkout; go back to where it was when done.

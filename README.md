@@ -1,18 +1,18 @@
-# SudoWhizzy agent
+# AskYourStack agent
 
-This is the program that [SudoWhizzy](https://sudowhizzy.com) installs on a customer's Linux server. It is the only part of SudoWhizzy that runs on your machine, as the Linux user you choose (an ordinary user that owns your sites, or root for the whole server), so here is its source: read it, build it, and check that the binary we serve is the one this code makes.
+This is the program that [AskYourStack](https://askyourstack.com) installs on a customer's Linux server. It is the only part of AskYourStack that runs on your machine, as the Linux user you choose (an ordinary user that owns your sites, or root for the whole server), so here is its source: read it, build it, and check that the binary we serve is the one this code makes.
 
-The rest of SudoWhizzy (the MCP server your AI talks to, the risk classification, the approval gate, the dashboard) runs at sudowhizzy.com and is not in this repository.
+The rest of AskYourStack (the MCP server your AI talks to, the risk classification, the approval gate, the dashboard) runs at askyourstack.com and is not in this repository.
 
 ## What it does
 
 The agent is one static Go binary with no dependencies outside Go's standard library (`go.mod` lists none). It:
 
-- **dials out** to `https://sudowhizzy.com` and asks for work. It opens no port and runs no server. Each request waits up to 25 seconds for a job, then asks again (`loop` in `main.go`).
+- **dials out** to `https://askyourstack.com` and asks for work. It opens no port and runs no server. Each request waits up to 25 seconds for a job, then asks again (`loop` in `main.go`).
 - **runs the operations** the hub sends and posts the results back. The full list is the `switch` in `handle()` in `main.go`: facts about the machine, run a command, read and write a file, snapshots and rollback, background jobs, list the sites it finds, a health report, log and traffic reports, database queries with the site's own credentials, the site's console (bin/magento, wp-cli, bin/console, artisan, drush), server-to-server copies for migrations, database dumps and restores, image conversion, a whole-site crawl and the malware scan.
 - **updates itself** from a signed manifest (`selfUpdate` in `main.go`): the manifest's ed25519 signature is checked against `releaseKey`, the public key built into the binary (the same key as `release-key.pem` here), the download's SHA-256 is checked against the manifest, and the new binary must start and name the expected version before it replaces the old one, which is kept as `.prev`.
 
-The agent does not judge commands. The classification into read, change, destructive and blocked, the server's safety mode and the approvals happen at sudowhizzy.com before a job reaches the agent. In other words, whoever controls the hub, or your private MCP address within the mode you set, controls what the agent runs. Two things the hub cannot override are on this machine: disconnecting, and the lock below.
+The agent does not judge commands. The classification into read, change, destructive and blocked, the server's safety mode and the approvals happen at askyourstack.com before a job reaches the agent. In other words, whoever controls the hub, or your private MCP address within the mode you set, controls what the agent runs. Two things the hub cannot override are on this machine: disconnecting, and the lock below.
 
 ## What it talks to
 
@@ -50,10 +50,10 @@ systemctl disable --now sudowhizzy-agent
 
 ## Check a release against this source
 
-Every release is built from a commit of this repository, with Go and flags that make the build reproducible: the same commit and the same Go version give byte-for-byte the same binary. The release manifest at <https://sudowhizzy.com/dl/manifest.json> names the version, the SHA-256 of each binary, the commit and the Go version, and <https://sudowhizzy.com/dl/manifest.sig> is its signature.
+Every release is built from a commit of this repository, with Go and flags that make the build reproducible: the same commit and the same Go version give byte-for-byte the same binary. The release manifest at <https://askyourstack.com/dl/manifest.json> names the version, the SHA-256 of each binary, the commit and the Go version, and <https://askyourstack.com/dl/manifest.sig> is its signature.
 
 ```sh
-git clone https://github.com/shopwhizzy/sudowhizzy-agent.git
+git clone https://github.com/shopwhizzy/askyourstack-agent.git
 cd sudowhizzy-agent
 sh verify.sh                                   # the release served right now
 sh verify.sh /usr/local/bin/sudowhizzy-agent   # and the binary installed on this machine
@@ -62,8 +62,8 @@ sh verify.sh /usr/local/bin/sudowhizzy-agent   # and the binary installed on thi
 `verify.sh` checks the manifest's signature with `release-key.pem`, checks out the commit the manifest names, builds with the same command and compares the hash. You need git, curl, openssl and the Go version the manifest names (a different Go version gives a different hash, which proves nothing either way). By hand:
 
 ```sh
-curl -fsSL https://sudowhizzy.com/dl/manifest.json -o manifest.json
-curl -fsSL https://sudowhizzy.com/dl/manifest.sig | base64 -d > manifest.sig
+curl -fsSL https://askyourstack.com/dl/manifest.json -o manifest.json
+curl -fsSL https://askyourstack.com/dl/manifest.sig | base64 -d > manifest.sig
 openssl pkeyutl -verify -pubin -inkey release-key.pem -rawin -in manifest.json -sigfile manifest.sig
 git checkout <commit from manifest.json>
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false \
@@ -74,10 +74,10 @@ sudowhizzy-agent build            # an installed agent prints its version, commi
 
 ## The installer
 
-`install.sh` is the script behind the one-line install. It downloads the binary for your CPU from `https://sudowhizzy.com/dl/`, enrols with your one-time token and installs a systemd unit (as root) or a user unit or cron watchdog (as a user). To read it before running it:
+`install.sh` is the script behind the one-line install. It downloads the binary for your CPU from `https://askyourstack.com/dl/`, enrols with your one-time token and installs a systemd unit (as root) or a user unit or cron watchdog (as a user). To read it before running it:
 
 ```sh
-curl -fsSL https://sudowhizzy.com/install.sh -o install.sh
+curl -fsSL https://askyourstack.com/install.sh -o install.sh
 less install.sh
 sh install.sh <your token>
 ```
@@ -96,7 +96,7 @@ go test ./...
 
 ## Reporting a security problem
 
-Write to <info@sudowhizzy.com> with "security" in the subject, or see <https://sudowhizzy.com/.well-known/security.txt>. We answer every report.
+Write to <info@askyourstack.com> with "security" in the subject, or see <https://askyourstack.com/.well-known/security.txt>. We answer every report.
 
 ## Licence
 
