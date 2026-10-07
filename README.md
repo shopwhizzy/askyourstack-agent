@@ -54,7 +54,7 @@ Every release is built from a commit of this repository, with Go and flags that 
 
 ```sh
 git clone https://github.com/shopwhizzy/askyourstack-agent.git
-cd sudowhizzy-agent
+cd askyourstack-agent
 sh verify.sh                                   # the release served right now
 sh verify.sh /usr/local/bin/sudowhizzy-agent   # and the binary installed on this machine
 ```
