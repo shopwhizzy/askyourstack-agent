@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	version = "0.14.2"
+	version = "0.15.0"
 	// Releases are signed with the matching private key, kept on the control plane.
 	releaseKey = "yipnfd7HAM5S31jEJZiYO2hTQJD1Z2QrxUCN1jQkYic="
 	keepAuto   = 20

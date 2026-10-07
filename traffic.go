@@ -9,11 +9,13 @@ import (
 	"bufio"
 	"bytes"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -128,6 +130,39 @@ func top(m map[string]int, n int) []counted {
 	return out
 }
 
+// The machine's own addresses, read at most once a minute. A request from one
+// of them is a hop between two servers on this machine (Varnish, or nginx in
+// front of nginx or Apache): the front log already holds the visitor, so the
+// hop would count every request twice and show this machine as the busiest
+// address.
+var ownCache struct {
+	sync.Mutex
+	at  time.Time
+	set map[string]bool
+}
+
+func ownAddrs() map[string]bool {
+	ownCache.Lock()
+	defer ownCache.Unlock()
+	if ownCache.set == nil || time.Since(ownCache.at) > time.Minute {
+		set := map[string]bool{}
+		if addrs, err := net.InterfaceAddrs(); err == nil {
+			for _, a := range addrs {
+				if n, ok := a.(*net.IPNet); ok {
+					set[n.IP.String()] = true
+				}
+			}
+		}
+		ownCache.set, ownCache.at = set, time.Now()
+	}
+	return ownCache.set
+}
+
+func ownHop(ip string, own map[string]bool) bool {
+	p := net.ParseIP(ip)
+	return p != nil && (p.IsLoopback() || own[p.String()])
+}
+
 func traffic() (any, error) {
 	return trafficAt(time.Now(), accessLogGlobs())
 }
@@ -146,8 +181,9 @@ func trafficAt(now time.Time, globs []string) (any, error) {
 	}
 	minutes := make([]int, 15) // oldest first; the last one is the minute now running
 	ips, classes, statuses, agents := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
-	last5, oldest := 0, now
+	last5, pages5, hops, oldest := 0, 0, 0, now
 	partial := false
+	own := ownAddrs()
 	from := now.Add(-15 * time.Minute)
 	for _, l := range logs {
 		if fi, err := os.Stat(l); err != nil || fi.ModTime().Before(from) {
@@ -173,6 +209,10 @@ func trafficAt(now time.Time, globs []string) (any, error) {
 			if h.at.Before(from) || h.at.After(now.Add(time.Minute)) {
 				continue
 			}
+			if ownHop(h.ip, own) {
+				hops++
+				continue
+			}
 			i := 14 - int(now.Sub(h.at)/time.Minute)
 			if i < 0 {
 				i = 0
@@ -183,8 +223,14 @@ func trafficAt(now time.Time, globs []string) (any, error) {
 			minutes[i]++
 			if now.Sub(h.at) <= 5*time.Minute {
 				last5++
-				ips[h.ip]++
-				classes[pathClass(h.path)]++
+				class := pathClass(h.path)
+				classes[class]++
+				// Who sends what is judged on pages only: a visitor's browser
+				// fetches dozens of scripts, styles and images per page.
+				if class != "static" {
+					pages5++
+					ips[h.ip]++
+				}
 				st := h.status[:1] + "xx"
 				if h.status == "429" || h.status == "444" || h.status == "403" {
 					st = h.status
@@ -199,6 +245,8 @@ func trafficAt(now time.Time, globs []string) (any, error) {
 		"logs":       logs,
 		"minutes":    minutes,
 		"last5":      last5,
+		"pages5":     pages5,
+		"own_hops":   hops,
 		"ips":        len(ips),
 		"top_ips":    top(ips, 5),
 		"classes":    classes,

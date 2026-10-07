@@ -114,7 +114,8 @@ func crawlAt(now time.Time, globs []string, hours int, verify func(name, ip stri
 		return nil, fmt.Errorf("no access log changed in the last %d hours (looked in %s); pass log with the site's access log path", hours, strings.Join(globs, ", "))
 	}
 	bots := map[string]*crawlStats{}
-	total, humans := 0, 0
+	total, humans, hops := 0, 0, 0
+	own := ownAddrs()
 	oldest := now
 	partial := false
 	for _, l := range logs {
@@ -147,6 +148,10 @@ func crawlAt(now time.Time, globs []string, hours int, verify func(name, ip stri
 			}
 			cut = false
 			if h.at.Before(from) || h.at.After(now.Add(time.Minute)) {
+				continue
+			}
+			if ownHop(h.ip, own) { // Varnish or a proxy on this machine: the front log has it
+				hops++
 				continue
 			}
 			total++
@@ -206,7 +211,7 @@ func crawlAt(now time.Time, globs []string, hours int, verify func(name, ip stri
 	}
 	r := map[string]any{
 		"logs": logs, "hours": hours, "from": from.UTC().Format(time.RFC3339),
-		"requests": total, "not_crawlers": humans, "crawlers": out,
+		"requests": total, "not_crawlers": humans, "own_hops": hops, "crawlers": out,
 	}
 	if partial {
 		r["note"] = fmt.Sprintf("the logs are busier than %d MB for this period: counts start at %s", crawlBytes>>20, oldest.UTC().Format(time.RFC3339))
