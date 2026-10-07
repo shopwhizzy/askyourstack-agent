@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strings"
 )
 
 var (
@@ -43,19 +44,52 @@ func homeDir() string {
 	return "/root"
 }
 
-// State lives under /var/lib/sudowhizzy for root, or in the user's home otherwise.
-func stateDir(name string) string {
-	if privileged {
-		return filepath.Join("/var/lib/sudowhizzy", name)
+// firstDir picks the new-name folder when it exists, else the old-name one when that
+// exists (an install not yet moved by migrate), else the new name for a fresh install.
+func firstDir(newPath, oldPath string) string {
+	if _, err := os.Stat(newPath); err == nil {
+		return newPath
 	}
-	return filepath.Join(agentHome, ".local", "share", "sudowhizzy", name)
+	if _, err := os.Stat(oldPath); err == nil {
+		return oldPath
+	}
+	return newPath
 }
 
-func confFile() string {
+// State lives under /var/lib/askyourstack for root, or in the user's home otherwise.
+func stateBase() string {
 	if privileged {
-		return "/etc/sudowhizzy/agent.json"
+		return firstDir("/var/lib/askyourstack", "/var/lib/sudowhizzy")
 	}
-	return filepath.Join(agentHome, ".config", "sudowhizzy", "agent.json")
+	return firstDir(filepath.Join(agentHome, ".local", "share", "askyourstack"), filepath.Join(agentHome, ".local", "share", "sudowhizzy"))
+}
+
+func stateDir(name string) string { return filepath.Join(stateBase(), name) }
+
+func confDir() string {
+	if privileged {
+		return firstDir("/etc/askyourstack", "/etc/sudowhizzy")
+	}
+	return firstDir(filepath.Join(agentHome, ".config", "askyourstack"), filepath.Join(agentHome, ".config", "sudowhizzy"))
+}
+
+func confFile() string { return filepath.Join(confDir(), "agent.json") }
+
+// layout says which install this is, for the hub: "askyourstack" after the rename, else "sudowhizzy".
+func layout() string {
+	if strings.Contains(confPath, "askyourstack") {
+		return "askyourstack"
+	}
+	return "sudowhizzy"
+}
+
+// reloadPaths recomputes every path after migrate() moved the install.
+func reloadPaths() {
+	jobsDir, snapDir, backupDir, dumpDir = stateDir("jobs"), stateDir("snapshots"), stateDir("backups"), stateDir("dumps")
+	confPath = confFile()
+	pidFile = filepath.Join(filepath.Dir(confPath), "agent.pid")
+	stopFile = filepath.Join(filepath.Dir(confPath), "stopped")
+	lockFile = filepath.Join(filepath.Dir(confPath), "lock")
 }
 
 func agentUser() string {

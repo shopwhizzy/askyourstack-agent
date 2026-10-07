@@ -26,7 +26,7 @@ import (
 	"time"
 )
 
-const xferDir = "/var/lib/sudowhizzy/xfer"
+var xferDir = stateDir("xfer")
 
 var xferIDRe = regexp.MustCompile(`^[a-z0-9-]{8,64}$`)
 
@@ -141,7 +141,7 @@ func xferAllow(raw json.RawMessage) (any, error) {
 	}
 	self, _ := os.Executable()
 	if self == "" {
-		self = "/usr/local/bin/sudowhizzy-agent"
+		self = "/usr/local/bin/" + agentName
 	}
 	fields := strings.Fields(a.PublicKey)
 	line := fmt.Sprintf(`from="%s",expiry-time="%s",restrict,command="%s xfer-serve %s" %s %s sudowhizzy-xfer-%s`,

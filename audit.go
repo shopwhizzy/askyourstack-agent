@@ -36,7 +36,7 @@ import (
 var auditDir = stateDir("audits")
 
 const (
-	auditAgent    = "Mozilla/5.0 (compatible; SudoWhizzy-SiteAudit/1.0; +https://sudowhizzy.com)"
+	auditAgent    = "Mozilla/5.0 (compatible; AskYourStack-SiteAudit/1.0; +https://askyourstack.com)"
 	auditBodyMax  = 3 << 20
 	auditMaxPages = 5000
 	auditKeepRuns = 5

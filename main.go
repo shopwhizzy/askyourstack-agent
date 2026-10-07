@@ -1,4 +1,4 @@
-// sudowhizzy-agent runs on a customer server as root. It asks the hub for
+// askyourstack-agent runs on a customer server as root or as an ordinary user. It asks the hub for
 // jobs over HTTPS (long poll), runs them and posts the results back. It never
 // listens on a port, so nothing on the server is opened to the internet.
 package main
@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	version = "0.13.0"
+	version = "0.14.0"
 	// Releases are signed with the matching private key, kept on the control plane.
 	releaseKey = "yipnfd7HAM5S31jEJZiYO2hTQJD1Z2QrxUCN1jQkYic="
 	keepAuto   = 20
@@ -41,7 +41,7 @@ const (
 	exitRevoked = 3
 	// sourceRepo holds the public source; release.sh sets sourceCommit to the
 	// commit the binary was built from (go build -ldflags "-X main.sourceCommit=...").
-	sourceRepo = "https://github.com/shopwhizzy/sudowhizzy-agent"
+	sourceRepo = "https://github.com/shopwhizzy/askyourstack-agent"
 )
 
 var sourceCommit = "unreleased"
@@ -161,15 +161,26 @@ func main() {
 		}
 		return
 	}
+	// An install under the old name moves itself over first (migrate.go).
+	migrate()
+	if migrated {
+		reloadPaths()
+	}
 	raw, err := os.ReadFile(confPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "no config, run: sudowhizzy-agent enroll <hub> <token>")
+		fmt.Fprintln(os.Stderr, "no config, run: askyourstack-agent enroll <hub> <token>")
 		os.Exit(1)
 	}
 	var c config
 	if err := json.Unmarshal(raw, &c); err != nil {
 		fmt.Fprintln(os.Stderr, "bad config:", err)
 		os.Exit(1)
+	}
+	if c.Hub == "https://sudowhizzy.com" {
+		c.Hub = "https://askyourstack.com"
+		if b, err := json.Marshal(c); err == nil {
+			os.WriteFile(confPath, b, 0o600)
+		}
 	}
 	writePid()
 	loop(c)
@@ -214,6 +225,7 @@ func loop(c config) {
 		req, _ := http.NewRequest("GET", c.Hub+"/agent/poll", nil)
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 		req.Header.Set("X-Agent-Version", version)
+		req.Header.Set("X-Agent-Layout", layout())
 		if locked() {
 			req.Header.Set("X-Agent-Locked", "1")
 		}
@@ -359,7 +371,9 @@ func report(c config, id string, r result) {
 // --- facts
 
 func facts() map[string]any {
-	f := map[string]any{"agent_version": version, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(), "privileged": privileged, "user": agentUser(), "locked": locked()}
+	self, _ := os.Executable()
+	f := map[string]any{"agent_version": version, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(), "privileged": privileged, "user": agentUser(), "locked": locked(),
+		"install": map[string]string{"binary": self, "config": filepath.Dir(confPath), "state": stateBase(), "layout": layout()}}
 	f["hostname"], _ = os.Hostname()
 	if b, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
 		f["kernel"] = strings.TrimSpace(string(b))
@@ -1038,7 +1052,7 @@ func selfUpdate(c config, latest string) error {
 	if want == "" {
 		return errors.New("no build for " + runtime.GOARCH)
 	}
-	bin, err := fetch(c.Hub+"/dl/sudowhizzy-agent-linux-"+runtime.GOARCH, 64<<20)
+	bin, err := fetch(c.Hub+"/dl/askyourstack-agent-linux-"+runtime.GOARCH, 64<<20)
 	if err != nil {
 		return err
 	}
