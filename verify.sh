@@ -36,6 +36,10 @@ if [ "$GOT" = "$WANT" ]; then echo "build: the source at $COMMIT gives exactly t
 else echo "build: MISMATCH, built $GOT, manifest says $WANT (same Go version? $GO)"; exit 1; fi
 
 if [ "${1:-}" ]; then
+  if [ ! -f "$1" ]; then
+    echo "installed: no file at $1 on this machine. Run this on a server where the agent is installed (as root it lives at /usr/local/bin/sudowhizzy-agent, as a user at ~/.local/bin/sudowhizzy-agent), or leave the path out to check the release alone."
+    exit 2
+  fi
   HAVE=$(sha256sum "$1" | cut -d' ' -f1)
   if [ "$HAVE" = "$WANT" ]; then echo "installed: $1 is this release"
   else echo "installed: $1 is NOT this release ($HAVE); it may be an older version waiting to update, check with: $1 build"; exit 1; fi
