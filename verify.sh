@@ -2,7 +2,7 @@
 # Checks an AskYourStack agent release against this source.
 #
 #   sh verify.sh            checks the release askyourstack.com serves right now
-#   sh verify.sh /usr/local/bin/sudowhizzy-agent
+#   sh verify.sh /usr/local/bin/askyourstack-agent
 #                           also checks the binary installed on this machine
 #
 # What it does: downloads the release manifest and its signature, verifies the
@@ -40,7 +40,7 @@ else echo "build: MISMATCH, built $GOT, manifest says $WANT (same Go version? $G
 
 if [ "${1:-}" ]; then
   if [ ! -f "$1" ]; then
-    echo "installed: no file at $1 on this machine. Run this on a server where the agent is installed (as root it lives at /usr/local/bin/sudowhizzy-agent, as a user at ~/.local/bin/sudowhizzy-agent), or leave the path out to check the release alone."
+    echo "installed: no file at $1 on this machine. Run this on a server where the agent is installed (as root it lives at /usr/local/bin/askyourstack-agent, as a user at ~/.local/bin/askyourstack-agent), or leave the path out to check the release alone."
     exit 2
   fi
   HAVE=$(sha256sum "$1" | cut -d' ' -f1)

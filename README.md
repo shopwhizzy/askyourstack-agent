@@ -26,26 +26,26 @@ Three endpoints, all outbound HTTPS to the hub, with the agent's own token as a 
 
 Nothing else leaves the server unless a job reads it (a file your AI asked for, a command's output, a report). Database passwords are read from the site's own configuration and handed to the database client in a private file (`sites.go`); they are never part of a result. Server-to-server copies for a migration go straight between the two servers over rsync and SSH with a throwaway key (`transfer.go`); the files never pass through the hub.
 
-To see it yourself on a server: `ss -tnp | grep sudowhizzy-agent`.
+To see it yourself on a server: `ss -tnp | grep askyourstack-agent`.
 
 ## Where it keeps things
 
-As root (a system service): configuration in `/etc/sudowhizzy/agent.json` (the hub address and the agent's token, mode 0600), state in `/var/lib/sudowhizzy` (jobs, snapshots, dumps, audits, deleted after 7 to 90 days), the binary in `/usr/local/bin`. As an ordinary user (shared hosting, no root): `~/.config/sudowhizzy`, `~/.local/share/sudowhizzy` and `~/.local/bin`, and it manages only that user's own sites and files (`mode.go`). Root is optional: run the same install line as a jailed Linux user and the operating system, not the agent, is what keeps it inside that user's home.
+As root (a system service): configuration in `/etc/askyourstack/agent.json` (the hub address and the agent's token, mode 0600), state in `/var/lib/askyourstack` (jobs, snapshots, dumps, audits, deleted after 7 to 90 days), the binary in `/usr/local/bin`. As an ordinary user (shared hosting, no root): `~/.config/askyourstack`, `~/.local/share/askyourstack` and `~/.local/bin`, and it manages only that user's own sites and files (`mode.go`). Root is optional: run the same install line as a jailed Linux user and the operating system, not the agent, is what keeps it inside that user's home.
 
 ## The lock
 
 ```
-sudowhizzy-agent lock
+askyourstack-agent lock
 ```
 
-While the lock is set, the agent answers only the operations that read (`readOps` in `lock.go`: facts, files, logs, the health, traffic and crawl reports, snapshots and dumps it takes itself, read-only database queries) and refuses every other job, whatever the hub sends and whatever safety mode the server has in the dashboard. Shell commands (`run`, `job_start`) are refused entirely: the agent cannot tell a reading command from a writing one. Only someone with a shell on the server can lift it, with `sudowhizzy-agent unlock`. It is the one check that does not depend on the hub. Signed agent updates still apply while locked.
+While the lock is set, the agent answers only the operations that read (`readOps` in `lock.go`: facts, files, logs, the health, traffic and crawl reports, snapshots and dumps it takes itself, read-only database queries) and refuses every other job, whatever the hub sends and whatever safety mode the server has in the dashboard. Shell commands (`run`, `job_start`) are refused entirely: the agent cannot tell a reading command from a writing one. Only someone with a shell on the server can lift it, with `askyourstack-agent unlock`. It is the one check that does not depend on the hub. Signed agent updates still apply while locked.
 
 ## Disconnect
 
 In the dashboard, Disconnect revokes the agent's token: the agent exits with code 3 and systemd leaves it stopped. On the server:
 
 ```
-systemctl disable --now sudowhizzy-agent
+systemctl disable --now askyourstack-agent
 ```
 
 ## Check a release against this source
@@ -56,7 +56,7 @@ Every release is built from a commit of this repository, with Go and flags that 
 git clone https://github.com/shopwhizzy/askyourstack-agent.git
 cd askyourstack-agent
 sh verify.sh                                   # the release served right now
-sh verify.sh /usr/local/bin/sudowhizzy-agent   # and the binary installed on this machine
+sh verify.sh /usr/local/bin/askyourstack-agent   # and the binary installed on this machine
 ```
 
 `verify.sh` checks the manifest's signature with `release-key.pem`, checks out the commit the manifest names, builds with the same command and compares the hash. You need git, curl, openssl and the Go version the manifest names (a different Go version gives a different hash, which proves nothing either way). By hand:
@@ -67,9 +67,9 @@ curl -fsSL https://askyourstack.com/dl/manifest.sig | base64 -d > manifest.sig
 openssl pkeyutl -verify -pubin -inkey release-key.pem -rawin -in manifest.json -sigfile manifest.sig
 git checkout <commit from manifest.json>
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false \
-  -ldflags="-s -w -X main.sourceCommit=$(git rev-parse HEAD)" -o sudowhizzy-agent .
-sha256sum sudowhizzy-agent        # must equal files.amd64 in manifest.json
-sudowhizzy-agent build            # an installed agent prints its version, commit and Go version
+  -ldflags="-s -w -X main.sourceCommit=$(git rev-parse HEAD)" -o askyourstack-agent .
+sha256sum askyourstack-agent        # must equal files.amd64 in manifest.json
+askyourstack-agent build            # an installed agent prints its version, commit and Go version
 ```
 
 ## The installer
@@ -87,7 +87,7 @@ sh install.sh <your token>
 ```sh
 go build .
 go test ./...
-./sudowhizzy-agent sites     # what list_sites would answer on this machine
+./askyourstack-agent sites     # what list_sites would answer on this machine
 ```
 
 ## The malware scan's patterns
