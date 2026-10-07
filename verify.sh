@@ -14,7 +14,10 @@
 set -eu
 HUB="${HUB:-https://sudowhizzy.com}"
 cd "$(dirname "$0")"
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d)
+# Checking out the release commit detaches this checkout; go back to where it was when done.
+PREV=$(git symbolic-ref -q --short HEAD || git rev-parse HEAD)
+trap 'rm -rf "$T"; git -c advice.detachedHead=false checkout -q "$PREV" 2>/dev/null' EXIT
 
 curl -fsSL "$HUB/dl/manifest.json" -o "$T/manifest.json"
 curl -fsSL "$HUB/dl/manifest.sig" | base64 -d > "$T/manifest.sig"
