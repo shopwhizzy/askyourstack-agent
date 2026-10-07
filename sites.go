@@ -444,11 +444,14 @@ func dbQuery(raw json.RawMessage) (any, error) {
 
 	stmt := strings.TrimRight(strings.TrimSpace(a.SQL), "; \n\t")
 	script := stmt + ";\n"
+	// The hub quotes string values with backslashes; under NO_BACKSLASH_ESCAPES a quote
+	// could end a value early, so that mode is switched off for this session.
+	const plainQuoting = "SET SESSION sql_mode = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', @@SESSION.sql_mode, ','), ',NO_BACKSLASH_ESCAPES,', ','));\n"
 	if a.ReadOnly {
 		// The hub sorted this as a read; the database enforces it too.
-		script = "SET SESSION TRANSACTION READ ONLY;\nSTART TRANSACTION READ ONLY;\n" + script + "COMMIT;\n"
+		script = plainQuoting + "SET SESSION TRANSACTION READ ONLY;\nSTART TRANSACTION READ ONLY;\n" + script + "COMMIT;\n"
 	} else {
-		script += "SELECT ROW_COUNT() AS affected_rows;\n"
+		script = plainQuoting + script + "SELECT ROW_COUNT() AS affected_rows;\n"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -519,6 +522,21 @@ func writeMyCnf(db *dbConf) (string, error) {
 		return "", err
 	}
 	os.Chmod(f.Name(), 0o600)
+	// A line break in a setting would start a new option line in a file a root process reads.
+	for _, v := range []string{db.User, db.Password, db.Socket, db.Host, db.Port} {
+		if strings.ContainsAny(v, "\r\n\x00") {
+			f.Close()
+			os.Remove(f.Name())
+			return "", errors.New("the site's database settings hold a line break; refusing to write them to a client file")
+		}
+	}
+	if db.Port != "" {
+		if _, err := strconv.Atoi(db.Port); err != nil {
+			f.Close()
+			os.Remove(f.Name())
+			return "", errors.New("the site's database port is not a number")
+		}
+	}
 	q := func(v string) string { return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(v) + `"` }
 	fmt.Fprintf(f, "[client]\nuser=%s\npassword=%s\n", q(db.User), q(db.Password))
 	if db.Socket != "" {

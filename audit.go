@@ -242,13 +242,56 @@ func auditClient(dialTo string) *http.Client {
 		// certificate may be one only the CDN trusts, so it is not checked here.
 		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			_, port, _ := net.SplitHostPort(addr)
+			// The web server's ports only: an address with another port must not turn this
+			// into a way of reading services that listen on this machine alone.
+			if port != "80" && port != "443" {
+				return nil, errors.New("only ports 80 and 443 are fetched from this server's own web server")
+			}
 			return d.DialContext(ctx, network, net.JoinHostPort(dialTo, port))
 		}
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	} else {
-		tr.DialContext = d.DialContext
+		tr.DialContext = publicDialer(d)
 	}
 	return &http.Client{Transport: tr, Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
+// publicDialer connects only to public addresses: the audit walks sites as a visitor
+// would, and a visitor cannot reach this machine's private network.
+func publicDialer(d *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		for _, ip := range ips {
+			if internalIP(ip.IP) && !auditAllowInternal {
+				return nil, errors.New(host + " is a private or local address; site_audit fetches public sites, or this server's own when its web server names the host")
+			}
+		}
+		var last error = errors.New("no address for " + host)
+		for _, ip := range ips {
+			c, err := d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+			if err == nil {
+				return c, nil
+			}
+			last = err
+		}
+		return nil, last
+	}
+}
+
+var auditAllowInternal = false // tests run a site on loopback
+
+func internalIP(ip net.IP) bool {
+	if v4 := ip.To4(); v4 != nil && v4[0] == 100 && v4[1]&0xc0 == 64 {
+		return true // 100.64.0.0/10, carrier NAT
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
 }
 
 func sameSite(a, b string) bool {
@@ -281,7 +324,12 @@ func localAddrs() []string {
 // newAuditFetcher picks how pages are fetched: from this machine's own web
 // server when it serves the site and answers for it, else over the internet.
 func newAuditFetcher(start *url.URL, via string) (*auditFetcher, error) {
-	tryLocal := via == "local" || (via != "public" && servedHere(start.Hostname()))
+	// Local fetching only for a host this machine's web server names: with any other
+	// host it would be a way of asking this machine's own web server for arbitrary names.
+	tryLocal := via != "public" && servedHere(start.Hostname())
+	if via == "local" && !tryLocal {
+		return nil, errors.New("this server's web server does not name " + start.Hostname() + "; use the site's own address, or via \"public\"")
+	}
 	if tryLocal {
 		for _, plain := range []bool{false, true} {
 			if plain && start.Scheme != "https" {

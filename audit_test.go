@@ -173,3 +173,6 @@ func TestAuditWalk(t *testing.T) {
 		t.Errorf("status filter: %v", s["count"])
 	}
 }
+
+// The fake sites in these tests listen on loopback, which the audit otherwise refuses.
+func init() { auditAllowInternal = true }

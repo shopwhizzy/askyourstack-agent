@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	version = "0.14.0"
+	version = "0.14.1"
 	// Releases are signed with the matching private key, kept on the control plane.
 	releaseKey = "yipnfd7HAM5S31jEJZiYO2hTQJD1Z2QrxUCN1jQkYic="
 	keepAuto   = 20
@@ -526,6 +526,9 @@ func readFile(raw json.RawMessage) (any, error) {
 	if err := json.Unmarshal(raw, &a); err != nil || !filepath.IsAbs(a.Path) {
 		return nil, errors.New("path must be absolute")
 	}
+	if protectedPath(a.Path) {
+		return nil, errProtected
+	}
 	fi, err := os.Stat(a.Path)
 	if err != nil {
 		return nil, err
@@ -560,6 +563,16 @@ func writeFile(raw json.RawMessage) (any, error) {
 	}
 	if err := json.Unmarshal(raw, &a); err != nil || !filepath.IsAbs(a.Path) {
 		return nil, errors.New("path must be absolute")
+	}
+	if protectedPath(a.Path) {
+		return nil, errProtected
+	}
+	// A symlink is written through, as an editor would, never replaced by a plain file.
+	if fi, err := os.Lstat(a.Path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		a.Path = resolvePath(a.Path)
+		if protectedPath(a.Path) {
+			return nil, errProtected
+		}
 	}
 	data := []byte(a.Content)
 	if a.Encoding == "base64" {
@@ -602,16 +615,7 @@ func writeFile(raw json.RawMessage) (any, error) {
 	if err := os.MkdirAll(filepath.Dir(a.Path), 0o755); err != nil {
 		return nil, err
 	}
-	tmp := a.Path + ".sudowhizzy-tmp"
-	if err := os.WriteFile(tmp, data, mode); err != nil {
-		return nil, err
-	}
-	os.Chmod(tmp, mode)
-	if uid >= 0 {
-		os.Chown(tmp, uid, gid)
-	}
-	if err := os.Rename(tmp, a.Path); err != nil {
-		os.Remove(tmp)
+	if err := writeAtomic(a.Path, bytes.NewReader(data), mode, uid, gid); err != nil {
 		return nil, err
 	}
 	return map[string]any{"path": a.Path, "bytes": len(data), "previous_version": backup}, nil
@@ -953,22 +957,13 @@ func restoreEntry(target string, hdr *tar.Header, r io.Reader) error {
 		}
 		return os.Lchown(target, hdr.Uid, hdr.Gid)
 	case tar.TypeReg:
+		if protectedPath(target) {
+			return nil // the agent's own files are never rolled back from an archive
+		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
-		tmp := target + ".sudowhizzy-tmp"
-		f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(f, r); err != nil {
-			f.Close()
-			os.Remove(tmp)
-			return err
-		}
-		f.Close()
-		if err := os.Rename(tmp, target); err != nil {
-			os.Remove(tmp)
+		if err := writeAtomic(target, r, mode, -1, -1); err != nil {
 			return err
 		}
 	default:
@@ -1004,6 +999,13 @@ func maybeUpdate(c config, latest string) {
 		return
 	}
 	lastTried, lastTriedAt = latest, time.Now()
+	// A manifest is signed, but an old one is signed too: a hub (or whoever stands in
+	// for it) must not be able to put a version with known holes back. Rolling back
+	// means releasing a higher version with the old code.
+	if versionBelow(latest, version) {
+		fmt.Fprintln(os.Stderr, "hub offers", latest, "which is older than", version, "; refused")
+		return
+	}
 	if err := selfUpdate(c, latest); err != nil {
 		fmt.Fprintln(os.Stderr, "update to", latest, "failed:", err)
 		return
