@@ -50,14 +50,19 @@ func parseAccess(line string) (hit, bool) {
 	return hit{at: t, ip: m[1], path: m[4], status: m[5], agent: m[6]}, true
 }
 
-var staticExt = regexp.MustCompile(`(?i)\.(js|css|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|map)$`)
+var staticExt = regexp.MustCompile(`(?i)\.(js|css|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|map|json|txt|mp4|webm)$`)
+
+// Asset folders, whatever the extension: Luma's RequireJS fetches dozens of Knockout
+// .html templates from /static/ per page view, and .html cannot go in staticExt
+// (Magento's product addresses end in .html). PHP under them is no asset.
+var staticDir = regexp.MustCompile(`^/(pub/)?(static|media)/|^/wp-(content|includes)/|^/skin/|^/js/`)
 
 // What a request is for, to tell the user (and their AI) what the bots go after.
 func pathClass(p string) string {
 	lp := strings.ToLower(p)
 	path, query, _ := strings.Cut(lp, "?")
 	switch {
-	case staticExt.MatchString(path):
+	case staticExt.MatchString(path) || staticDir.MatchString(path) && !strings.HasSuffix(path, ".php"):
 		return "static"
 	case strings.Contains(path, "/catalogsearch/") || strings.HasPrefix(path, "/search") || strings.Contains(query, "s=") && (path == "/" || path == "/index.php"):
 		return "search"

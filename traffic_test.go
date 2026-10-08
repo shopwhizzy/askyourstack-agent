@@ -18,10 +18,15 @@ func TestPathClass(t *testing.T) {
 		"/women/tops.html?color=49&size=167&price=10-20": "filtered",
 		"/women/tops.html?p=2":                           "pages",
 		"/static/version1/frontend/x.js":                 "static",
-		"/rest/V1/guest-carts":                           "api",
-		"/wp-login.php":                                  "login",
-		"/?s=hello":                                      "search",
-		"/checkout/cart/add/":                            "cart_checkout",
+		"/static/version1/frontend/Magento/luma/en_US/Magento_Ui/templates/collection.html": "static",
+		"/static/version1/frontend/Magento/luma/en_US/js-translation.json":                  "static",
+		"/pub/media/catalog/product/a/b/ab.jpg?width=300":                                   "static",
+		"/women/tops.html":                "pages",
+		"/wp-content/plugins/x/shell.php": "pages",
+		"/rest/V1/guest-carts":            "api",
+		"/wp-login.php":                   "login",
+		"/?s=hello":                       "search",
+		"/checkout/cart/add/":             "cart_checkout",
 	}
 	for p, want := range cases {
 		if got := pathClass(p); got != want {
