@@ -85,3 +85,38 @@ func TestTraffic(t *testing.T) {
 		t.Errorf("agents = %v", a)
 	}
 }
+
+// s39142-sconto on 2026-10-09: one scanner walked secret file names on a vhost kept
+// in maintenance (503 to everything); the shop answered its visitors as usual.
+func TestTrafficErrorsToOthers(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 10, 9, 15, 28, 0, 0, time.UTC)
+	stamp := now.Add(-time.Minute).Format("02/Jan/2006:15:04:05 -0700")
+	var b strings.Builder
+	for i := 0; i < 2900; i++ {
+		fmt.Fprintf(&b, "77.237.242.95 - - [%s] \"GET /x%d/.env HTTP/1.1\" 503 200 \"-\" \"curl/8\"\n", stamp, i)
+	}
+	for i := 0; i < 100; i++ {
+		st := 200
+		if i < 3 {
+			st = 502
+		}
+		fmt.Fprintf(&b, "198.51.%d.%d - - [%s] \"GET /p%d.html HTTP/1.1\" %d 512 \"-\" \"Mozilla/5.0\"\n", i/50, i, stamp, i, st)
+	}
+	log := filepath.Join(dir, "access.log")
+	os.WriteFile(log, []byte(b.String()), 0o644)
+	os.Chtimes(log, now, now)
+	got, err := trafficAt(now, []string{filepath.Join(dir, "*.log")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := got.(map[string]any)
+	o := r["others"].(map[string]int)
+	// The scanner and four visitors (one request each, which four is a tie) are the five busiest.
+	if o["n"] != 96 || o["5xx"] > 3 {
+		t.Errorf("others = %v", o)
+	}
+	if r["statuses"].(map[string]int)["5xx"] != 2903 {
+		t.Errorf("statuses = %v", r["statuses"])
+	}
+}

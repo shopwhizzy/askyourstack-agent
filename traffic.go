@@ -186,6 +186,7 @@ func trafficAt(now time.Time, globs []string) (any, error) {
 	}
 	minutes := make([]int, 15) // oldest first; the last one is the minute now running
 	ips, classes, statuses, agents := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
+	byIP, err5 := map[string]int{}, map[string]int{} // every request and every 5xx answer per address
 	last5, pages5, hops, oldest := 0, 0, 0, now
 	partial := false
 	own := ownAddrs()
@@ -242,11 +243,27 @@ func trafficAt(now time.Time, globs []string) (any, error) {
 				}
 				statuses[st]++
 				agents[h.agent]++
+				byIP[h.ip]++
+				if st == "5xx" {
+					err5[h.ip]++
+				}
 			}
 		}
 	}
+	// Answers to everyone but the five busiest page senders: a flood answered with
+	// errors (a maintenance vhost's 503s, say) says nothing about real visitors;
+	// errors served to the others do.
+	others, others5 := last5, 0
+	for _, n := range err5 {
+		others5 += n
+	}
+	for _, c := range top(ips, 5) {
+		others -= byIP[c.Key]
+		others5 -= err5[c.Key]
+	}
 	r := map[string]any{
 		"checked_at": now.UTC().Format(time.RFC3339),
+		"others":     map[string]int{"n": others, "5xx": others5},
 		"logs":       logs,
 		"minutes":    minutes,
 		"last5":      last5,
