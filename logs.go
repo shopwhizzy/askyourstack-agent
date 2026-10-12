@@ -45,6 +45,9 @@ var logRoutine = map[string]*regexp.Regexp{
 	"auth":      regexp.MustCompile(`session (opened|closed) for user|New session \d+ of user|Session \d+ logged out|Removed session`),
 }
 
+// A PHP error the web server wrote into its own error log.
+var phpInWeb = regexp.MustCompile(`PHP message: |PHP (Fatal error|Parse error|Warning|Deprecated|Notice):`)
+
 var logNames = "web-error, php, site, magento, wordpress, database, system, mail, auth"
 
 // Timestamps at the start of a line, one per log family.
@@ -292,6 +295,30 @@ func readLogs(raw json.RawMessage) (any, error) {
 		}
 		read = append(read, info)
 		entries = append(entries, in...)
+	}
+	// PHP-FPM workers hand their errors to the web server (nginx "FastCGI sent in
+	// stderr: PHP message: ...", Apache "AH01071: Got error 'PHP message: ..."),
+	// so on Debian and Ubuntu the php log stays empty while the fatals sit in the
+	// web server's error logs. Take the PHP lines from those too.
+	if kind == "php" && a.Path == "" {
+		web, _ := logFiles("web-error", s)
+		for _, f := range web {
+			lines, _, err := tailLines(f, logTail)
+			if err != nil {
+				continue
+			}
+			in, _ := logEntries(lines, f, from, now)
+			kept := in[:0]
+			for _, e := range in {
+				if phpInWeb.MatchString(e.text) {
+					kept = append(kept, e)
+				}
+			}
+			if len(kept) > 0 {
+				read = append(read, map[string]any{"file": f, "entries": len(kept), "note": "PHP messages passed on by the web server"})
+				entries = append(entries, kept...)
+			}
+		}
 	}
 	// Nothing on disk for this kind: the journal has it (or it is the system log).
 	if a.Path == "" && len(files) == 0 || kind == "system" {

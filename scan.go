@@ -8,6 +8,7 @@ package main
 
 import (
 	"bufio"
+	"debug/buildinfo"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -146,7 +147,19 @@ func malwareScanNow(raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 	var found []finding
+	self := ownBinaries()
 	add := func(f finding) {
+		// Our own agent is an ELF file in ~/.local/bin for a user install: a
+		// rule looking for hidden programs in dot folders finds it.
+		if f.Where != "" && (self[realPath(f.Where)] || isAgentBinary(f.Where)) {
+			return
+		}
+		// The crontab watchdog of a user install runs the agent from ~/.local/bin.
+		if strings.HasPrefix(f.Where, "cron:") && strings.Contains(f.Detail, "# askyourstack-agent") {
+			if m := agentInCron.FindStringSubmatch(f.Detail); m != nil && isAgentBinary(m[1]) {
+				return
+			}
+		}
 		if len(found) < 150 {
 			found = append(found, f)
 		}
@@ -364,7 +377,14 @@ func malwareScanNow(raw json.RawMessage) (any, error) {
 				if res, err := siteCLI(b); err == nil {
 					r := res.(map[string]any)
 					if r["exit_code"].(int) != 0 {
-						add(finding{"high", "WordPress files differ from the official ones (wp " + strings.Join(sub, " ") + ")", s.Root, truncate(r["stderr"].(string)+r["stdout"].(string), 1500)})
+						text := r["stderr"].(string) + r["stdout"].(string)
+						if onlyMissing(text) {
+							// Files the release lists but the folder lacks: an incomplete
+							// copy or an upstream checksum list, not changed code.
+							add(finding{"low", "WordPress files are missing compared with the official list (wp " + strings.Join(sub, " ") + "); nothing was changed or added", s.Root, truncate(text, 600)})
+						} else {
+							add(finding{"high", "WordPress files differ from the official ones (wp " + strings.Join(sub, " ") + ")", s.Root, truncate(text, 1500)})
+						}
 					}
 				}
 			}
@@ -414,4 +434,47 @@ func truncate(s string, n int) string {
 		return strings.ToValidUTF8(s[:n], "") + "…"
 	}
 	return s
+}
+
+// The agent's own binaries (the running one, its .prev and .new), by real path.
+func ownBinaries() map[string]bool {
+	out := map[string]bool{}
+	if exe, err := os.Executable(); err == nil {
+		for _, p := range []string{exe, exe + ".prev", exe + ".new"} {
+			out[realPath(p)] = true
+			out[p] = true
+		}
+	}
+	return out
+}
+
+// A wp verify-checksums answer that only names files that do not exist.
+func onlyMissing(text string) bool {
+	missing := 0
+	for _, l := range strings.Split(text, "\n") {
+		l = strings.TrimSpace(l)
+		switch {
+		case l == "":
+		case strings.HasPrefix(l, "Warning: File doesn't exist:"):
+			missing++
+		case strings.HasPrefix(l, "Error:") && strings.Contains(l, "verify against checksums"):
+		default:
+			return false
+		}
+	}
+	return missing > 0
+}
+
+var agentInCron = regexp.MustCompile(`(/\S*/(?:askyourstack|sudowhizzy)-agent)\s`)
+
+// An AskYourStack agent binary: named like one and built from our module, as
+// Go records in every binary (debug/buildinfo), not just any file with the name.
+func isAgentBinary(path string) bool {
+	base := filepath.Base(path)
+	base = strings.TrimSuffix(strings.TrimSuffix(base, ".prev"), ".new")
+	if base != "askyourstack-agent" && base != "sudowhizzy-agent" {
+		return false
+	}
+	bi, err := buildinfo.ReadFile(path)
+	return err == nil && (bi.Path == "askyourstack/agent" || bi.Path == "sudowhizzy/agent" || bi.Main.Path == "askyourstack/agent" || bi.Main.Path == "sudowhizzy/agent")
 }

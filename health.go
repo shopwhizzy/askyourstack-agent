@@ -139,7 +139,11 @@ func health(raw json.RawMessage) (any, error) {
 		}
 		h["reboot_required"] = exec.CommandContext(ctx, "dnf", "-q", "needs-restarting", "-r").Run() != nil && commandExists("dnf")
 	} else if _, err := exec.LookPath("apt-get"); err == nil {
-		if out, err := exec.CommandContext(ctx, "apt-get", "-s", "-o", "Debug::NoLocking=1", "upgrade").Output(); err == nil {
+		// A fresh Debian or Ubuntu image ships without package lists: apt then
+		// knows of no updates at all, which is not the same as none pending.
+		if lists, _ := filepath.Glob("/var/lib/apt/lists/*_Packages*"); len(lists) == 0 {
+			h["security_updates_unknown"] = "the package lists were never fetched (apt-get update), so pending updates are not known yet"
+		} else if out, err := exec.CommandContext(ctx, "apt-get", "-s", "-o", "Debug::NoLocking=1", "upgrade").Output(); err == nil {
 			n := 0
 			for _, l := range strings.Split(string(out), "\n") {
 				if strings.HasPrefix(l, "Inst ") && strings.Contains(l, "security") {
