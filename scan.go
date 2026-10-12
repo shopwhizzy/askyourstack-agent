@@ -8,7 +8,7 @@ package main
 
 import (
 	"bufio"
-	"debug/buildinfo"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -99,6 +99,8 @@ func malwareScan(raw json.RawMessage) (any, error) {
 		Site  string `json:"site"`
 		Days  int    `json:"days"`
 		Rules string `json:"rules"` // from the hub: base64 of the scrambled rules (rules.go)
+		// From the hub: the SHA-256 of every released agent binary (agent/dist/hashes.txt).
+		AgentHashes []string `json:"agent_hashes"`
 	}
 	json.Unmarshal(raw, &a)
 	s, err := pickSite(a.Site)
@@ -114,13 +116,26 @@ func malwareScan(raw json.RawMessage) (any, error) {
 	}
 	command := fmt.Sprintf("%s scan %s %d", shellQuote(self), shellQuote(s.Root), a.Days)
 	// The rules wait in a private file, still scrambled, for the scan to pick up and delete.
+	rulesArg := "-"
 	if rules, err := base64.StdEncoding.DecodeString(a.Rules); err == nil && len(rules) > 0 {
 		if f, err := os.CreateTemp("", "sw-rules-*"); err == nil {
 			os.Chmod(f.Name(), 0o600)
 			f.Write(rules)
 			f.Close()
-			command += " " + shellQuote(f.Name())
+			rulesArg = f.Name()
 		}
+	}
+	var known []string
+	for _, h := range a.AgentHashes {
+		if hexHash.MatchString(h) {
+			known = append(known, h)
+		}
+	}
+	if rulesArg != "-" || len(known) > 0 {
+		command += " " + shellQuote(rulesArg)
+	}
+	if len(known) > 0 {
+		command += " " + strings.Join(known, ",")
 	}
 	b, _ := json.Marshal(map[string]string{"command": command, "name": "malware-scan"})
 	res, err := jobStart(b)
@@ -137,6 +152,7 @@ func malwareScanNow(raw json.RawMessage) (any, error) {
 		Site      string `json:"site"`
 		Days      int    `json:"days"`
 		RulesFile string `json:"rules_file"`
+		Known     string `json:"known"` // comma-separated SHA-256s of released agent binaries
 	}
 	json.Unmarshal(raw, &a)
 	if a.Days <= 0 {
@@ -147,16 +163,16 @@ func malwareScanNow(raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 	var found []finding
-	self := ownBinaries()
+	known := knownAgents(a.Known)
 	add := func(f finding) {
 		// Our own agent is an ELF file in ~/.local/bin for a user install: a
 		// rule looking for hidden programs in dot folders finds it.
-		if f.Where != "" && (self[realPath(f.Where)] || isAgentBinary(f.Where)) {
+		if f.Where != "" && isAgentBinary(f.Where, known) {
 			return
 		}
 		// The crontab watchdog of a user install runs the agent from ~/.local/bin.
-		if strings.HasPrefix(f.Where, "cron:") && strings.Contains(f.Detail, "# askyourstack-agent") {
-			if m := agentInCron.FindStringSubmatch(f.Detail); m != nil && isAgentBinary(m[1]) {
+		if strings.HasPrefix(f.Where, "cron:") && agentCronLine.MatchString(f.Detail) {
+			if m := agentInCron.FindStringSubmatch(f.Detail); m != nil && isAgentBinary(m[1], known) {
 				return
 			}
 		}
@@ -440,19 +456,40 @@ func truncate(s string, n int) string {
 }
 
 // The agent's own binaries (the running one, its .prev and .new), by real path.
-func ownBinaries() map[string]bool {
+var hexHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// The SHA-256s a genuine agent binary may have: every release the hub lists, and
+// the image this scan is running from (the agent itself, checked when it was
+// installed or swapped in by a signed update).
+func knownAgents(list string) map[string]bool {
 	out := map[string]bool{}
-	if exe, err := os.Executable(); err == nil {
-		for _, p := range []string{exe, exe + ".prev", exe + ".new"} {
-			out[realPath(p)] = true
-			out[p] = true
+	for _, h := range strings.Split(list, ",") {
+		if hexHash.MatchString(h) {
+			out[h] = true
 		}
+	}
+	if h, err := fileSHA256("/proc/self/exe"); err == nil {
+		out[h] = true
 	}
 	return out
 }
 
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, io.LimitReader(f, 128<<20)); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 // A wp verify-checksums answer that only names files that do not exist.
 func onlyMissing(text string) bool {
+	text = ansi.ReplaceAllString(text, "")
 	missing := 0
 	for _, l := range strings.Split(text, "\n") {
 		l = strings.TrimSpace(l)
@@ -470,16 +507,24 @@ func onlyMissing(text string) bool {
 
 var agentInCron = regexp.MustCompile(`(/\S*/(?:askyourstack|sudowhizzy)-agent)\s`)
 
-// An AskYourStack agent binary: named like one and built from our module, as
-// Go records in every binary (debug/buildinfo), not just any file with the name.
-func isAgentBinary(path string) bool {
+// The watchdog lines hub/install.sh writes, exactly (the rules drop the "|"
+// characters from what they report, so "||" may be missing): nothing before
+// or after the agent on a marked line.
+var agentCronLine = regexp.MustCompile(`: (?:\* \* \* \* \*|@reboot) \[ -e ` + cronPath + `/stopped \] \|{0,2} ?(?:flock -n ` + cronPath + `/agent\.lock ` + cronPath + `/\.local/bin/(?:askyourstack|sudowhizzy)-agent|\[ -e ` + cronPath + `/agent\.pid \] && kill -0 \$\(cat ` + cronPath + `/agent\.pid\) 2>/dev/null \|{0,2} ?` + cronPath + `/\.local/bin/(?:askyourstack|sudowhizzy)-agent) >> ` + cronPath + `/agent\.log 2>&1 # askyourstack-agent$`)
+
+const cronPath = `/[-A-Za-z0-9_./]*`
+
+// An AskYourStack agent binary: named like one and byte for byte a released
+// build (its SHA-256 among the known ones). The name or the Go module path alone
+// would not do: anyone with a shell on the account can give their own program both.
+func isAgentBinary(path string, known map[string]bool) bool {
 	base := filepath.Base(path)
 	base = strings.TrimSuffix(strings.TrimSuffix(base, ".prev"), ".new")
 	if base != "askyourstack-agent" && base != "sudowhizzy-agent" {
 		return false
 	}
-	bi, err := buildinfo.ReadFile(path)
-	return err == nil && (bi.Path == "askyourstack/agent" || bi.Path == "sudowhizzy/agent" || bi.Main.Path == "askyourstack/agent" || bi.Main.Path == "sudowhizzy/agent")
+	h, err := fileSHA256(path)
+	return err == nil && known[h]
 }
 
 // WordPress core files that wp core verify-checksums found byte for byte equal
@@ -490,7 +535,10 @@ func isAgentBinary(path string) bool {
 var coreRel = regexp.MustCompile(`^(wp-admin/|wp-includes/)`)
 var checksumFile = regexp.MustCompile(`(?m)^Warning: File (?:doesn't verify against checksum|should not exist): (\S+)`)
 
+var ansi = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
 func dropVerifiedCore(found []finding, exit int, text string) []finding {
+	text = ansi.ReplaceAllString(text, "")
 	if exit != 0 && !onlyMissing(text) {
 		return found
 	}

@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	version = "0.15.5"
+	version = "0.15.6"
 	// Releases are signed with the matching private key, kept on the control plane.
 	releaseKey = "yipnfd7HAM5S31jEJZiYO2hTQJD1Z2QrxUCN1jQkYic="
 	keepAuto   = 20
@@ -69,12 +69,16 @@ func main() {
 		return
 	}
 	// Run by malware_scan as a background job: prints the report as JSON.
-	if (len(os.Args) == 4 || len(os.Args) == 5) && os.Args[1] == "scan" {
-		rulesFile := ""
-		if len(os.Args) == 5 {
+	if len(os.Args) >= 4 && len(os.Args) <= 6 && os.Args[1] == "scan" {
+		// scan <root> <days> [rules file or -] [known agent SHA-256s, comma-separated]
+		rulesFile, known := "", ""
+		if len(os.Args) >= 5 && os.Args[4] != "-" {
 			rulesFile = os.Args[4]
 		}
-		b, _ := json.Marshal(map[string]any{"site": os.Args[2], "days": atoiOr(os.Args[3], 14), "rules_file": rulesFile})
+		if len(os.Args) == 6 {
+			known = os.Args[5]
+		}
+		b, _ := json.Marshal(map[string]any{"site": os.Args[2], "days": atoiOr(os.Args[3], 14), "rules_file": rulesFile, "known": known})
 		out, err := malwareScanNow(b)
 		if err != nil {
 			fmt.Println(`{"error":` + strconvQuote(err.Error()) + `}`)
