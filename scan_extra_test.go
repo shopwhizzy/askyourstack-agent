@@ -37,3 +37,20 @@ func TestJSONLogLine(t *testing.T) {
 		t.Fatal("plain line read as JSON")
 	}
 }
+
+func TestDropVerifiedCore(t *testing.T) {
+	in := func() []finding {
+		return []finding{
+			{"medium", "long hex-escaped string", "wp-includes/SimplePie/src/Misc.php:2028", ""},
+			{"medium", "long hex-escaped string", "wp-includes/evil.php:3", ""},
+			{"high", "PHP file in an upload folder", "wp-content/uploads/x.php", ""},
+		}
+	}
+	got := dropVerifiedCore(in(), 0, "Warning: File should not exist: wp-includes/evil.php\nSuccess: WordPress installation verifies against checksums.")
+	if len(got) != 2 || got[0].Where != "wp-includes/evil.php:3" || got[1].Where != "wp-content/uploads/x.php" {
+		t.Fatalf("verified core: %+v", got)
+	}
+	if got := dropVerifiedCore(in(), 1, "Warning: File doesn't verify against checksum: wp-login.php\nError: WordPress installation doesn't verify against checksums."); len(got) != 3 {
+		t.Fatalf("changed core keeps everything: %+v", got)
+	}
+}

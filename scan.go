@@ -376,6 +376,9 @@ func malwareScanNow(raw json.RawMessage) (any, error) {
 				b, _ := json.Marshal(map[string]any{"site": s.Root, "tool": "wp", "args": sub, "timeout_s": 180})
 				if res, err := siteCLI(b); err == nil {
 					r := res.(map[string]any)
+					if sub[0] == "core" {
+						found = dropVerifiedCore(found, r["exit_code"].(int), r["stderr"].(string)+r["stdout"].(string))
+					}
 					if r["exit_code"].(int) != 0 {
 						text := r["stderr"].(string) + r["stdout"].(string)
 						if onlyMissing(text) {
@@ -477,4 +480,31 @@ func isAgentBinary(path string) bool {
 	}
 	bi, err := buildinfo.ReadFile(path)
 	return err == nil && (bi.Path == "askyourstack/agent" || bi.Path == "sudowhizzy/agent" || bi.Main.Path == "askyourstack/agent" || bi.Main.Path == "sudowhizzy/agent")
+}
+
+// WordPress core files that wp core verify-checksums found byte for byte equal
+// to wordpress.org's release cannot hold anything planted, so pattern findings
+// in them are false (sodium_compat and SimplePie carry long hex strings on
+// every site). Files the check calls changed or extra keep their findings, and
+// nothing is dropped when the check found changed code.
+var coreRel = regexp.MustCompile(`^(wp-admin/|wp-includes/)`)
+var checksumFile = regexp.MustCompile(`(?m)^Warning: File (?:doesn't verify against checksum|should not exist): (\S+)`)
+
+func dropVerifiedCore(found []finding, exit int, text string) []finding {
+	if exit != 0 && !onlyMissing(text) {
+		return found
+	}
+	suspect := map[string]bool{}
+	for _, m := range checksumFile.FindAllStringSubmatch(text, -1) {
+		suspect[m[1]] = true
+	}
+	kept := found[:0]
+	for _, f := range found {
+		file, _, _ := strings.Cut(f.Where, ":")
+		if coreRel.MatchString(file) && !suspect[file] {
+			continue
+		}
+		kept = append(kept, f)
+	}
+	return kept
 }
