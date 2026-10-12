@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
@@ -192,6 +193,9 @@ func describeSite(s *site, all []vhost) *site {
 		s.Woo = firstMatch(fileText(filepath.Join(s.Root, "wp-content/plugins/woocommerce/woocommerce.php")), `(?m)^\s*\*?\s*Version:\s*([0-9][^\s]*)`)
 	}
 	vhostsOf(s, all)
+	if h := ownHost(s); h != "" {
+		s.Domains = addOnce(s.Domains, h)
+	}
 	if s.box != nil {
 		for _, d := range s.box.domains() {
 			s.Domains = addOnce(s.Domains, d)
@@ -243,6 +247,9 @@ func pickSite(ref string) (*site, error) {
 		var match []*site
 		for _, s := range all {
 			vhostsOf(s, hosts)
+			if h := ownHost(s); h != "" {
+				s.Domains = append(s.Domains, h)
+			}
 			if s.box != nil {
 				s.Domains = append(s.Domains, s.box.domains()...)
 			}
@@ -850,4 +857,18 @@ func siteCLI(raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"site": s.Root, "as_user": s.Owner, "exit_code": code, "timed_out": ctx.Err() != nil, "seconds": time.Since(start).Seconds(), "stdout": stdout.String(), "stderr": stderr.String()}, nil
+}
+
+// The host a site names in its own configuration, for kinds that run their own
+// server behind a proxy (Ghost on port 2368): the web server's virtual host
+// points at the proxy, not at the site's folder, so nothing else links them.
+func ownHost(s *site) string {
+	if s.Kind != "ghost" {
+		return ""
+	}
+	u, err := url.Parse(webAddress(ghostConfig(s)["url"]))
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
 }

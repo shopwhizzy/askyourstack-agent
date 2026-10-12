@@ -27,3 +27,13 @@ func TestAgentInCron(t *testing.T) {
 		t.Fatal("not an agent binary")
 	}
 }
+
+func TestJSONLogLine(t *testing.T) {
+	at, text, ok := jsonLogLine(`{"name":"Log","hostname":"h","pid":42062,"level":50,"version":"6.69.0","msg":"Could not get webhook secret","err":{"message":"fetch failed"},"time":"2026-10-12T10:24:33.322Z","v":0}`)
+	if !ok || text != "ERROR Could not get webhook secret: fetch failed" || at.Year() != 2026 {
+		t.Fatalf("got %v %q %v", ok, text, at)
+	}
+	if _, _, ok := jsonLogLine(`[2026-10-12 10:00:00] not json`); ok {
+		t.Fatal("plain line read as JSON")
+	}
+}

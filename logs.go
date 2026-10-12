@@ -42,6 +42,7 @@ var logRoutine = map[string]*regexp.Regexp{
 	"web-error": regexp.MustCompile(`^\[(notice|info|debug)\]`),
 	"database":  regexp.MustCompile(`\[(Note|System)\]`),
 	"php":       regexp.MustCompile(`^(NOTICE|DEBUG): `),
+	"site":      regexp.MustCompile(`^(INFO|DEBUG|TRACE) `),
 	"auth":      regexp.MustCompile(`session (opened|closed) for user|New session \d+ of user|Session \d+ logged out|Removed session`),
 }
 
@@ -144,7 +145,11 @@ func logEntries(lines []string, file string, from, now time.Time) (in []logEntry
 		if strings.TrimSpace(l) == "" {
 			continue
 		}
-		if t, rest, ok := logTime(l, now); ok {
+		if t, rest, ok := jsonLogLine(l); ok {
+			flush()
+			timed = true
+			cur, extra = &logEntry{at: t, text: rest, file: file}, 0
+		} else if t, rest, ok := logTime(l, now); ok {
 			flush()
 			timed = true
 			cur, extra = &logEntry{at: t, text: rest, file: file}, 0
@@ -433,4 +438,76 @@ func readLogs(raw json.RawMessage) (any, error) {
 		out["note"] = "Nothing in this window. A quiet log is good news; try more hours or another log if you expected something."
 	}
 	return out, nil
+}
+
+// A JSON log line (Ghost's bunyan, pino and other Node loggers, many PHP and Go
+// ones): its time and a readable "LEVEL message" instead of the raw object,
+// whose time and process id would make every line look different.
+func jsonLogLine(l string) (time.Time, string, bool) {
+	l = strings.TrimSpace(l)
+	if !strings.HasPrefix(l, "{") || !strings.HasSuffix(l, "}") {
+		return time.Time{}, "", false
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(l), &m) != nil {
+		return time.Time{}, "", false
+	}
+	var at time.Time
+	for _, k := range []string{"time", "timestamp", "@timestamp", "ts", "datetime"} {
+		switch v := m[k].(type) {
+		case string:
+			for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05", "2006-01-02T15:04:05.000000-07:00"} {
+				if t, err := time.Parse(layout, v); err == nil {
+					at = t
+					break
+				}
+			}
+		case float64:
+			if v > 1e12 {
+				at = time.UnixMilli(int64(v))
+			} else if v > 1e9 {
+				at = time.Unix(int64(v), 0)
+			}
+		}
+		if !at.IsZero() {
+			break
+		}
+	}
+	msg := ""
+	for _, k := range []string{"msg", "message"} {
+		if v, ok := m[k].(string); ok && v != "" {
+			msg = v
+			break
+		}
+	}
+	if at.IsZero() || msg == "" {
+		return time.Time{}, "", false
+	}
+	level := ""
+	switch v := m["level"].(type) {
+	case float64: // bunyan and pino numbers
+		switch {
+		case v >= 60:
+			level = "FATAL"
+		case v >= 50:
+			level = "ERROR"
+		case v >= 40:
+			level = "WARN"
+		case v >= 30:
+			level = "INFO"
+		default:
+			level = "DEBUG"
+		}
+	case string:
+		level = strings.ToUpper(v)
+	}
+	if e, ok := m["err"].(map[string]any); ok {
+		if em, ok := e["message"].(string); ok && em != "" && !strings.Contains(msg, em) {
+			msg += ": " + em
+		}
+	}
+	if level != "" {
+		msg = level + " " + msg
+	}
+	return at, msg, true
 }
