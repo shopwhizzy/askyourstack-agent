@@ -459,6 +459,12 @@ func ruleScan(s *site, rules []*scanRule, add func(finding)) ruleReport {
 				rep.Skipped = append(rep.Skipped, r.ID+" (needs a root agent)")
 				continue
 			}
+			// The lock promises no shell commands at all, whatever the hub sends: a scan rule
+			// is a shell command written elsewhere, so a locked agent skips it.
+			if locked() {
+				rep.Skipped = append(rep.Skipped, r.ID+" (the agent is locked on this server: no shell commands)")
+				continue
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			cmd := exec.CommandContext(ctx, "bash", "-c", r.Command)
 			cmd.Env = append(os.Environ(), "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "SITEROOT="+s.Root)

@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -33,7 +34,7 @@ import (
 )
 
 const (
-	version = "0.15.6"
+	version = "0.15.7"
 	// Releases are signed with the matching private key, kept on the control plane.
 	releaseKey = "yipnfd7HAM5S31jEJZiYO2hTQJD1Z2QrxUCN1jQkYic="
 	keepAuto   = 20
@@ -523,6 +524,40 @@ func run(raw json.RawMessage) (any, error) {
 
 const maxRead = 1 << 20
 
+// foreignLink: on a root agent, a symlink in the path that belongs to another user. The
+// hub judges a path by its spelling (a site file is a change, /etc/cron.d is destructive),
+// but the kernel follows the link, so a site user's `logs -> /etc/cron.d` would have root
+// read or write there under the site's name (review of 2026-10-13). Root's own links
+// (/var/www -> /srv/www) are the administrator's layout and pass.
+func foreignLink(p string) error {
+	if os.Geteuid() != 0 {
+		return nil // a user agent only reaches what that user may anyway
+	}
+	cur := "/"
+	for _, part := range strings.Split(filepath.Clean(p), "/") {
+		if part == "" {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if err != nil {
+			return nil // the rest does not exist yet
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok && st.Uid != 0 {
+			dest, _ := os.Readlink(cur)
+			who := fmt.Sprint(st.Uid)
+			if u, err := user.LookupId(who); err == nil {
+				who = u.Username
+			}
+			return fmt.Errorf("%s is a symbolic link made by %s pointing at %s; AskYourStack does not follow another user's links as root. Use the real path if that is what is meant", cur, who, dest)
+		}
+	}
+	return nil
+}
+
 func readFile(raw json.RawMessage) (any, error) {
 	var a struct {
 		Path string `json:"path"`
@@ -532,6 +567,9 @@ func readFile(raw json.RawMessage) (any, error) {
 	}
 	if protectedPath(a.Path) {
 		return nil, errProtected
+	}
+	if err := foreignLink(a.Path); err != nil {
+		return nil, err
 	}
 	fi, err := os.Stat(a.Path)
 	if err != nil {
@@ -570,6 +608,9 @@ func writeFile(raw json.RawMessage) (any, error) {
 	}
 	if protectedPath(a.Path) {
 		return nil, errProtected
+	}
+	if err := foreignLink(a.Path); err != nil {
+		return nil, err
 	}
 	// A symlink is written through, as an editor would, never replaced by a plain file.
 	if fi, err := os.Lstat(a.Path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
