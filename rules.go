@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -467,6 +468,12 @@ func ruleScan(s *site, rules []*scanRule, add func(finding)) ruleReport {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			cmd := exec.CommandContext(ctx, "bash", "-c", r.Command)
+			// A rule's command can leave a child alive that keeps stdout open (nginx 1.14.1 does with `nginx -T`):
+			// without these, Output() waits for that pipe long after the 60 s timeout. Own process group, killed whole,
+			// and a short wait before the pipes are closed.
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+			cmd.WaitDelay = 5 * time.Second
 			cmd.Env = append(os.Environ(), "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "SITEROOT="+s.Root)
 			if s.Owner != "" && s.Owner != "root" {
 				cmd.Env = append(cmd.Env, "USERACCT="+s.Owner) // look at this site's account, not the whole server
