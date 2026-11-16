@@ -24,6 +24,7 @@ import (
 var (
 	privileged = os.Geteuid() == 0
 	agentHome  = homeDir()
+	dataHome   = dataHomeDir()
 
 	jobsDir   = stateDir("jobs")
 	snapDir   = stateDir("snapshots")
@@ -46,6 +47,33 @@ func homeDir() string {
 	return "/root"
 }
 
+// dataHomeDir is where an unprivileged agent keeps its own files: its binary, its
+// configuration and its state. Normally that is the user's home. Some accounts own
+// none of it: the app folder belongs to root and the user may only write in a few
+// folders inside it (a deploy layout with releases, shared and tmp). There install.sh
+// puts the agent in a folder the user can write to, and the agent finds it again from
+// where its own binary sits (<folder>/.local/bin/askyourstack-agent), so the crontab
+// line and the unit are the same as ever. AYS_HOME names the folder outright.
+// Sites, backups and the HOME that commands run with still follow the real home.
+func dataHomeDir() string {
+	if h := os.Getenv("AYS_HOME"); filepath.IsAbs(h) {
+		return filepath.Clean(h)
+	}
+	if !privileged {
+		if self, err := os.Executable(); err == nil {
+			name := filepath.Base(self)
+			bin := filepath.Dir(self)
+			if (strings.HasPrefix(name, "askyourstack-agent") || strings.HasPrefix(name, "sudowhizzy-agent")) &&
+				filepath.Base(bin) == "bin" && filepath.Base(filepath.Dir(bin)) == ".local" {
+				if base := filepath.Dir(filepath.Dir(bin)); base != "/" && base != "." {
+					return base
+				}
+			}
+		}
+	}
+	return agentHome
+}
+
 // firstDir picks the new-name folder when it exists, else the old-name one when that
 // exists (an install not yet moved by migrate), else the new name for a fresh install.
 func firstDir(newPath, oldPath string) string {
@@ -63,7 +91,7 @@ func stateBase() string {
 	if privileged {
 		return firstDir("/var/lib/askyourstack", "/var/lib/sudowhizzy")
 	}
-	return firstDir(filepath.Join(agentHome, ".local", "share", "askyourstack"), filepath.Join(agentHome, ".local", "share", "sudowhizzy"))
+	return firstDir(filepath.Join(dataHome, ".local", "share", "askyourstack"), filepath.Join(dataHome, ".local", "share", "sudowhizzy"))
 }
 
 func stateDir(name string) string { return filepath.Join(stateBase(), name) }
@@ -72,7 +100,7 @@ func confDir() string {
 	if privileged {
 		return firstDir("/etc/askyourstack", "/etc/sudowhizzy")
 	}
-	return firstDir(filepath.Join(agentHome, ".config", "askyourstack"), filepath.Join(agentHome, ".config", "sudowhizzy"))
+	return firstDir(filepath.Join(dataHome, ".config", "askyourstack"), filepath.Join(dataHome, ".config", "sudowhizzy"))
 }
 
 func confFile() string { return filepath.Join(confDir(), "agent.json") }
@@ -120,8 +148,10 @@ func resolvePath(p string) string {
 func protectedPath(p string) bool {
 	real := resolvePath(p)
 	dirs := []string{"/etc/askyourstack", "/etc/sudowhizzy", confDir()}
-	if agentHome != "" {
-		dirs = append(dirs, filepath.Join(agentHome, ".config", "askyourstack"), filepath.Join(agentHome, ".config", "sudowhizzy"))
+	for _, h := range []string{agentHome, dataHome} {
+		if h != "" {
+			dirs = append(dirs, filepath.Join(h, ".config", "askyourstack"), filepath.Join(h, ".config", "sudowhizzy"))
+		}
 	}
 	for _, d := range dirs {
 		if d = resolvePath(d); real == d || strings.HasPrefix(real, d+"/") {

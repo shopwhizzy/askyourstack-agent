@@ -52,17 +52,61 @@ fi
 
 # ---- ordinary user: no root ----
 echo "Installing AskYourStack for user '$(id -un)' (no root): it will manage this user's own sites and files only."
-BINDIR="$HOME/.local/bin"
+
+fail() { echo "$*" >&2; exit 1; }
+
+HOME="${HOME:-}"
+[ -n "$HOME" ] || fail "HOME is not set for this user, so there is no place to install the agent. Set HOME, or run this with AYS_HOME=/a/folder you can write to."
+
+# can_write DIR: DIR exists (or can be made) and this user can really create a file in it.
+can_write() {
+  mkdir -p "$1" 2>/dev/null || return 1
+  _t="$1/.ays-write-test.$$"
+  ( : > "$_t" ) 2>/dev/null || return 1
+  rm -f "$_t"
+}
+
+# Where the agent lives: the user's home. Some hosts give an app a home that belongs to
+# root, with only a few folders inside it the user may write to (a deploy layout with
+# releases, shared and tmp). There the agent goes into the first of those that is kept
+# between deploys, and finds itself again from where its binary sits, so the crontab
+# line and the unit stay as they are. AYS_HOME=/folder picks the folder yourself.
+BASE=""
+if [ -n "${AYS_HOME:-}" ]; then
+  case "$AYS_HOME" in /*) ;; *) fail "AYS_HOME must be an absolute folder path (got '$AYS_HOME')." ;; esac
+  can_write "$AYS_HOME" || fail "AYS_HOME ($AYS_HOME) is not a folder that $(id -un) can write to."
+  BASE="$AYS_HOME"
+elif can_write "$HOME"; then
+  BASE="$HOME"
+else
+  for d in shared data var storage; do
+    if [ -d "$HOME/$d" ] && can_write "$HOME/$d"; then BASE="$HOME/$d"; break; fi
+  done
+  if [ -z "$BASE" ]; then
+    echo "The home folder of $(id -un) ($HOME) cannot be written to, and none of the usual writable folders" >&2
+    echo "in it (shared, data, var, storage) exists, so the agent has nowhere to live. Nothing was installed." >&2
+    echo "Ask whoever runs this server for a folder that $(id -un) can write to and that is kept (not cleaned" >&2
+    echo "like tmp), then run the install line again with AYS_HOME set to it:" >&2
+    echo "  curl -fsSL $HUB/install.sh | AYS_HOME=/that/folder sh -s <token>" >&2
+    exit 1
+  fi
+fi
+if [ "$BASE" != "$HOME" ]; then
+  echo "The home folder ($HOME) cannot be written to, so the agent will live in $BASE instead."
+fi
+
+BINDIR="$BASE/.local/bin"
 BIN="$BINDIR/askyourstack-agent"
-CONFDIR="$HOME/.config/askyourstack"
-mkdir -p "$BINDIR" "$CONFDIR"
-download "$BIN.new" "$HUB/dl/askyourstack-agent-linux-$ARCH"
+CONFDIR="$BASE/.config/askyourstack"
+mkdir -p "$BINDIR" "$CONFDIR" || fail "Could not create $BINDIR and $CONFDIR."
+download "$BIN.new" "$HUB/dl/askyourstack-agent-linux-$ARCH" || fail "Could not download the agent from $HUB. Nothing was installed."
 chmod 755 "$BIN.new" && mv -f "$BIN.new" "$BIN"
-"$BIN" enroll "$HUB" "$TOKEN"
+"$BIN" enroll "$HUB" "$TOKEN" || fail "The agent could not enrol (see the message above). Nothing was started."
 
 STARTED=""
-# Prefer a per-user systemd service when the user has a working systemd instance.
-if command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
+# Prefer a per-user systemd service when the user has a working systemd instance
+# and a home it can write the unit to (not when the agent had to move to another folder).
+if [ "$BASE" = "$HOME" ] && command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
   mkdir -p "$HOME/.config/systemd/user"
   cat > "$HOME/.config/systemd/user/askyourstack-agent.service" <<UNIT
 [Unit]
@@ -116,5 +160,6 @@ if [ -z "$STARTED" ]; then
   echo "  $BIN"
 else
   echo "AskYourStack agent installed for your user and connected (kept running by: $STARTED)."
+  [ "$BASE" = "$HOME" ] || echo "Its files are in $BASE (the home folder is not writable)."
   echo "To disconnect: disconnect this server in the AskYourStack dashboard. To remove locally: rm -rf $CONFDIR $BIN, and remove the askyourstack-agent crontab lines if any."
 fi

@@ -173,10 +173,10 @@ func migrateRoot() {
 }
 
 func migrateUser() {
-	bin := filepath.Join(agentHome, ".local", "bin")
+	bin := filepath.Join(dataHome, ".local", "bin")
 	moveBinary(filepath.Join(bin, oldName), filepath.Join(bin, agentName))
-	moveDir(filepath.Join(agentHome, ".config", "sudowhizzy"), filepath.Join(agentHome, ".config", "askyourstack"))
-	moveDir(filepath.Join(agentHome, ".local", "share", "sudowhizzy"), filepath.Join(agentHome, ".local", "share", "askyourstack"))
+	moveDir(filepath.Join(dataHome, ".config", "sudowhizzy"), filepath.Join(dataHome, ".config", "askyourstack"))
+	moveDir(filepath.Join(dataHome, ".local", "share", "sudowhizzy"), filepath.Join(dataHome, ".local", "share", "askyourstack"))
 	// A crontab watchdog: point its lines at the new paths. The lock it holds is the same
 	// file through the symlink, and this process exits so the next tick starts the new one.
 	if out, err := exec.Command("crontab", "-l").Output(); err == nil && strings.Contains(string(out), "# "+oldName) {

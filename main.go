@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	version = "0.15.8"
+	version = "0.15.9"
 	// Releases are signed with the matching private key, kept on the control plane.
 	releaseKey = "yipnfd7HAM5S31jEJZiYO2hTQJD1Z2QrxUCN1jQkYic="
 	keepAuto   = 20
@@ -173,7 +173,7 @@ func main() {
 	}
 	raw, err := os.ReadFile(confPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "no config, run: askyourstack-agent enroll <hub> <token>")
+		fmt.Fprintln(os.Stderr, "no config at "+confPath+", run: askyourstack-agent enroll <hub> <token>")
 		os.Exit(1)
 	}
 	var c config
@@ -218,11 +218,17 @@ func enroll(hub, token string) error {
 		return errors.New("hub sent no token")
 	}
 	conf, _ := json.Marshal(config{Hub: hub, Token: out.Token})
+	hint := func(err error) error {
+		return fmt.Errorf("%w (the agent keeps its files under %s; if that folder cannot be written, run install.sh, which picks one that can, or set AYS_HOME to a folder this user can write to)", err, dataHome)
+	}
 	if err := os.MkdirAll(filepath.Dir(confPath), 0o700); err != nil {
-		return err
+		return hint(err)
 	}
 	clearStopped()
-	return os.WriteFile(confPath, conf, 0o600)
+	if err := os.WriteFile(confPath, conf, 0o600); err != nil {
+		return hint(err)
+	}
+	return nil
 }
 
 func loop(c config) {
